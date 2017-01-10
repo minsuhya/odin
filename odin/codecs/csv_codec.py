@@ -5,7 +5,6 @@ import csv
 from odin import bases
 from odin.fields import NOT_PROVIDED
 from odin.resources import create_resource_from_iter, create_resource_from_dict
-from odin.mapping import MappingResult
 from odin.utils import getmeta
 
 CONTENT_TYPE = 'text/csv'
@@ -155,3 +154,84 @@ def dumps(resources, resource_type=None, cls=csv.writer, **kwargs):
     buf = six.StringIO.StringIO()
     dump(buf, resources, resource_type, cls, **kwargs)
     return buf.getvalue()
+
+
+class CsvReader(bases.TypedResourceIterable):
+    def __init__(self, csv_codec, fp, resource_type, full_clean):
+        """
+
+        :type csv_codec: CsvCodec
+        :param fp:
+        :param resource_type:
+        :param full_clean:
+        """
+        super(CsvReader, self).__init__(resource_type)
+        self.include_header = csv_codec.include_header
+        self.full_clean = full_clean
+
+        self._reader = csv_codec.csv_module.reader(fp, csv_codec.dialect)
+
+    def __iter__(self):
+        reader_ = self._reader
+        resource_type = self.resource_type
+        full_clean = self.full_clean
+
+        if self.include_header:
+            fields = getmeta(resource_type).fields
+
+            # Pre-generate field mapping
+            header = next(reader_)
+            mapping = []
+            for field in fields:
+                if field.name in header:
+                    mapping.append(header.index(field.name))
+                else:
+                    mapping.append(None)
+
+            # Iterate CSV and process input
+            for row in reader_:
+                yield create_resource_from_iter(
+                    (NOT_PROVIDED if s is None else row[s] for s in mapping), resource_type, full_clean
+                )
+
+        else:
+            # Iterate CSV and process input
+            for row in reader_:
+                yield create_resource_from_iter(
+                    (NOT_PROVIDED if col is None else col for col in row), resource_type, full_clean
+                )
+
+
+class CsvWriter(bases.IterableCodecWriter):
+    def __init__(self, fp, resource_type, include_header, csv_module, dialect):
+        self.resource_type = resource_type
+        self.fields = fields = value_fields(resource_type)
+
+        # Setup writer
+        self._writer = csv_module.writer(fp, dialect)
+        if include_header:
+            self._writer.writerow([field.name for field in fields])
+
+    def write(self, resource):
+        dump_to_writer(writer, resources, resource_type, fields)
+
+
+class CsvCodec(bases.IterableCodec):
+    """
+    Codec for reading CSV files.
+    """
+    CONTENT_TYPE = 'text/csv'
+
+    def __init__(self, include_header=True, dialect='excel', csv_module=csv):
+        self.include_header = include_header
+        self.dialect = dialect
+        self.csv_module = csv_module
+
+    def reader(self, fp, resource_type, full_clean=True):
+        return CsvReader(self, fp, resource_type, full_clean)
+
+    def writer(self, fp, resource_type):
+        return CsvWriter(self, fp, resource_type)
+
+
+_default_codec = CsvCodec()

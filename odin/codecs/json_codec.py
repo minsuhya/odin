@@ -40,73 +40,70 @@ class OdinEncoder(json.JSONEncoder):
         return super(OdinEncoder, self)
 
 
-def load(fp, resource=None, full_clean=True, default_to_not_supplied=False):
-    """
-    Load a from a JSON encoded file.
+class JsonCodec(bases.DocumentCodec):
+    MIME_TYPE = 'application/json'
 
-    See :py:meth:`loads` for more details of the loading operation.
+    def __init__(self, encoder_cls=OdinEncoder, default_to_not_supplied=False, **kwargs):
+        """
+        :param encoder_cls: Encoder to use serializing to a string; default is the :py:class:`OdinEncoder`.
+        :param default_to_not_supplied: Used for loading partial resources. Any fields not supplied are replaced with
+            NOT_SUPPLIED.
 
-    :param fp: a file pointer to read JSON data from.
-    :param resource: A resource type, resource name or list of resources and names to use as the base for creating a
-        resource. If a list is supplied the first item will be used if a resource type is not supplied.
-    :param full_clean: Do a full clean of the object as part of the loading process.
-    :param default_to_not_supplied: Used for loading partial resources. Any fields not supplied are replaced with
-        NOT_SUPPLIED.
-    :returns: A resource object or object graph of resources loaded from file.
+        """
+        self.default_to_not_supplied = default_to_not_supplied
+        self.encoder = encoder_cls(**kwargs)
 
-    """
-    return loads(fp.read(), resource, full_clean, default_to_not_supplied)
+    def loads(self, fp, resource_type=None, full_clean=True):
+        """
+        Load a document from a JSON encoded file.
 
+        :param fp: a file pointer to read JSON data from.
+        :param resource_type: A resource type, resource name or list of
+            resources and names to use as the base for creating a resource. If
+            a list is supplied the first item will be used if a resource type
+            is not supplied.
+        :param full_clean: Do a full clean of the object as part of the
+            loading process.
+        :returns: A resource object or object graph of resources loaded from file.
 
-def loads(s, resource=None, full_clean=True, default_to_not_supplied=False):
-    """
-    Load from a JSON encoded string.
+        """
+        try:
+            return resources.build_object_graph(
+                json.loads(fp), resource_type, full_clean, False, self.default_to_not_supplied)
+        except (ValueError, TypeError) as ex:
+            raise CodecDecodeError(str(ex))
 
-    If a ``resource`` value is supplied it is used as the base resource for the supplied JSON. I one is not supplied a
-    resource type field ``$`` is used to obtain the type represented by the dictionary. A ``ValidationError`` will be
-    raised if either of these values are supplied and not compatible. It is valid for a type to be supplied in the file
-    to be a child object from within the inheritance tree.
+    def dump(self, resource, fp):
+        """
+        Dump to a JSON encoded file.
 
-    :param s: String to load and parse.
-    :param resource: A resource type, resource name or list of resources and names to use as the base for creating a
-        resource. If a list is supplied the first item will be used if a resource type is not supplied.
-    :param full_clean: Do a full clean of the object as part of the loading process.
-    :param default_to_not_supplied: Used for loading partial resources. Any fields not supplied are replaced with
-        NOT_SUPPLIED.
-    :returns: A resource object or object graph of resources parsed from supplied string.
+        :param resource: The root resource to dump to a JSON encoded file.
+        :param fp: The file pointer that represents the output file.
 
-    """
-    try:
-        return resources.build_object_graph(json.loads(s), resource, full_clean, False, default_to_not_supplied)
-    except (ValueError, TypeError) as ex:
-        raise CodecDecodeError(str(ex))
+        """
+        try:
+            # could accelerate with writelines in some versions of Python, at
+            # a debuggability cost
+            for chunk in self.encoder.iterencode(resource):
+                fp.write(chunk)
+        except ValueError as ex:
+            raise CodecEncodeError(str(ex))
 
+    def dumps(self, resource):
+        """
+        Dump to a JSON encoded string.
 
-def dump(resource, fp, cls=OdinEncoder, **kwargs):
-    """
-    Dump to a JSON encoded file.
+        :param resource: The root resource to dump to a JSON encoded file.
+        :returns: JSON encoded string.
 
-    :param resource: The root resource to dump to a JSON encoded file.
-    :param cls: Encoder to use serializing to a string; default is the :py:class:`OdinEncoder`.
-    :param fp: The file pointer that represents the output file.
+        """
+        try:
+            return self.encoder.encode(resource)
+        except ValueError as ex:
+            raise CodecEncodeError(str(ex))
 
-    """
-    try:
-        json.dump(resource, fp, cls=cls, **kwargs)
-    except ValueError as ex:
-        raise CodecEncodeError(str(ex))
-
-
-def dumps(resource, cls=OdinEncoder, **kwargs):
-    """
-    Dump to a JSON encoded string.
-
-    :param resource: The root resource to dump to a JSON encoded file.
-    :param cls: Encoder to use serializing to a string; default is the :py:class:`OdinEncoder`.
-    :returns: JSON encoded string.
-
-    """
-    try:
-        return json.dumps(resource, cls=cls, **kwargs)
-    except ValueError as ex:
-        raise CodecEncodeError(str(ex))
+_default_codec = JsonCodec()
+load = _default_codec.load
+loads = _default_codec.loads
+dump = _default_codec.dump
+dumps = _default_codec.dumps
